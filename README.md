@@ -1,6 +1,14 @@
 # HPA Monitor
 
+[![Go Version](https://img.shields.io/badge/go-1.24+-000000?style=flat-square&logo=go&logoColor=white)](go.mod)
+[![GitHub release](https://img.shields.io/github/v/release/younsl/hpa-monitor?style=flat-square&color=black&logo=github&logoColor=white&label=release)](https://github.com/younsl/hpa-monitor/releases)
+[![License](https://img.shields.io/github/license/younsl/hpa-monitor?style=flat-square&color=black&logo=github&logoColor=white)](LICENSE)
+
 A Kubernetes HPA (Horizontal Pod Autoscaler) monitoring application with real-time dashboard and WebSocket updates.
+
+![HPA Monitor Dashboard](docs/1.png)
+
+The dashboard provides real-time monitoring of HPA resources with tolerance calculations, showing current vs desired replicas, scaling status, and recent events.
 
 ## Features
 
