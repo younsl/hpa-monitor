@@ -1,0 +1,31 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "hpa-monitor.fullname" . }}
+  labels:
+    {{- include "hpa-monitor.labels" . | nindent 4 }}
+  {{- $globalAnnotations := include "hpa-monitor.annotations" . }}
+  {{- if or $globalAnnotations .Values.service.annotations }}
+  annotations:
+    {{- if $globalAnnotations }}
+    {{- $globalAnnotations | nindent 4 }}
+    {{- end }}
+    {{- with .Values.service.annotations }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- end }}
+spec:
+  type: {{ .Values.service.type }}
+  {{- if .Values.service.trafficDistribution }}
+  trafficDistribution: {{ .Values.service.trafficDistribution }}
+  {{- end }}
+  ports:
+    - port: {{ .Values.service.port }}
+      targetPort: {{ .Values.service.targetPort }}
+      protocol: TCP
+      name: http
+      {{- if eq .Values.service.type "NodePort" }}
+      nodePort: {{ .Values.service.nodePort }}
+      {{- end }}
+  selector:
+    {{- include "hpa-monitor.selectorLabels" . | nindent 4 }}

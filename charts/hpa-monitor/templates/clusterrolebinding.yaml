@@ -1,0 +1,20 @@
+{{- if .Values.rbac.create -}}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "hpa-monitor.clusterRoleBindingName" . }}
+  labels:
+    {{- include "hpa-monitor.labels" . | nindent 4 }}
+  {{- with (include "hpa-monitor.annotations" .) }}
+  annotations:
+    {{- . | nindent 4 }}
+  {{- end }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "hpa-monitor.clusterRoleName" . }}
+subjects:
+- kind: ServiceAccount
+  name: {{ include "hpa-monitor.serviceAccountName" . }}
+  namespace: {{ .Release.Namespace }}
+{{- end }}
