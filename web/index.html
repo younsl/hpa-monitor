@@ -1,0 +1,496 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HPA Monitor</title>
+    <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>HPA Monitor</h1>
+            <p>Real-time Horizontal Pod Autoscaler monitoring with 10% tolerance</p>
+            
+            <div class="version-info" id="version-info" onclick="window.open('https://github.com/younsl/hpa-monitor', '_blank')" style="cursor: pointer;">
+                Version: <span id="version">--</span>
+            </div>
+
+            <div class="connection-status" id="connection-status">
+                Connecting...
+            </div>
+
+            <div class="connection-status" id="refresh-timer" style="bottom: 4rem; right: 1rem;">
+                Next refresh in: <span id="countdown">--</span>s
+            </div>
+        </div>
+
+        <div class="stats">
+            <div class="stat-card">
+                <h3>Total HPAs</h3>
+                <div class="value" id="total-hpas">0</div>
+            </div>
+            <div class="stat-card">
+                <h3>Ready HPAs</h3>
+                <div class="value" id="ready-hpas">0</div>
+            </div>
+            <div class="stat-card">
+                <h3>Active Scaling</h3>
+                <div class="value" id="active-scaling">0</div>
+            </div>
+            <div class="stat-card">
+                <h3>Total Replicas</h3>
+                <div class="value" id="total-replicas">0</div>
+            </div>
+        </div>
+
+        <div class="search-container">
+            <input type="text" id="search-input" class="search-input" placeholder="Search HPA by name..." oninput="filterHPAs()">
+        </div>
+
+
+        <div class="loading" id="loading">
+            Loading HPA data...
+        </div>
+
+        <div class="hpa-grid" id="hpa-grid" style="display: none;">
+        </div>
+
+        <div class="no-data" id="no-data" style="display: none;">
+            <h3>No HPA resources found</h3>
+            <p>There are no Horizontal Pod Autoscalers in the cluster.</p>
+        </div>
+    </div>
+
+    <!-- Events Modal -->
+    <div id="eventsModal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="closeEventsModal()">&times;</span>
+            <h2 id="eventsModalTitle">Events</h2>
+            <div id="eventsModalContent" class="events-list">
+                <!-- Events will be populated here -->
+            </div>
+        </div>
+    </div>
+
+    <!-- Tolerance Help Modal -->
+    <div id="toleranceModal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="closeToleranceModal()">&times;</span>
+            <h2>Tolerance Information</h2>
+            <div style="padding: 1rem 0; line-height: 1.6; color: #f0f6fc;">
+                <p style="margin-bottom: 1rem;">
+                    <strong>Kubernetes 클러스터 전체에 Tolerance는 0.1(10%)가 글로벌하게 적용되어 있습니다.</strong>
+                </p>
+                <p style="margin-bottom: 1rem; color: #7d8590;">
+                    Tolerance는 HPA가 스케일링을 결정하기 전에 사용하는 허용 오차입니다. 
+                    현재 CPU 사용률과 목표 CPU 사용률의 비율(Ratio)이 1.0에서 
+                    tolerance 값만큼 벗어나야 스케일링이 발생합니다.
+                </p>
+                <div style="background: #21262d; padding: 1rem; border-radius: 6px; border-left: 3px solid #f1e05a;">
+                    <strong style="color: #f1e05a;">예시:</strong><br>
+                    • Ratio가 1.15인 경우: |1.15 - 1.0| = 0.15 ≥ 0.1 → 스케일링 발생<br>
+                    • Ratio가 1.05인 경우: |1.05 - 1.0| = 0.05 < 0.1 → 스케일링 없음
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let ws = null;
+        let reconnectTimer = null;
+        let hpaData = [];
+        let refreshInterval = 5; // seconds - will be loaded from config
+        let countdownTimer = null;
+        let remainingTime = refreshInterval;
+
+        function connectWebSocket() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}/ws`;
+            
+            ws = new WebSocket(wsUrl);
+            
+            ws.onopen = function() {
+                console.log('WebSocket connected');
+                updateConnectionStatus('connected');
+                clearTimeout(reconnectTimer);
+            };
+            
+            ws.onmessage = function(event) {
+                try {
+                    hpaData = JSON.parse(event.data);
+                    console.log('Received HPA data:', hpaData);
+                    if (hpaData.length > 0) {
+                        console.log('First HPA sample:', hpaData[0]);
+                    }
+                    updateUI();
+                    resetCountdown();
+                } catch (error) {
+                    console.error('Error parsing WebSocket message:', error);
+                }
+            };
+            
+            ws.onclose = function() {
+                console.log('WebSocket disconnected');
+                updateConnectionStatus('disconnected');
+                scheduleReconnect();
+            };
+            
+            ws.onerror = function(error) {
+                console.error('WebSocket error:', error);
+                updateConnectionStatus('disconnected');
+            };
+        }
+
+        function scheduleReconnect() {
+            clearTimeout(reconnectTimer);
+            reconnectTimer = setTimeout(function() {
+                console.log('Attempting to reconnect...');
+                connectWebSocket();
+            }, 5000);
+        }
+
+        function updateConnectionStatus(status) {
+            const statusElement = document.getElementById('connection-status');
+            if (status === 'connected') {
+                statusElement.textContent = 'Connected';
+                statusElement.className = 'connection-status connected';
+            } else {
+                statusElement.textContent = 'Disconnected';
+                statusElement.className = 'connection-status disconnected';
+            }
+        }
+
+        function updateUI() {
+            const loading = document.getElementById('loading');
+            const hpaGrid = document.getElementById('hpa-grid');
+            const noData = document.getElementById('no-data');
+            
+            loading.style.display = 'none';
+            
+            if (hpaData.length === 0) {
+                hpaGrid.style.display = 'none';
+                noData.style.display = 'block';
+            } else {
+                noData.style.display = 'none';
+                hpaGrid.style.display = 'grid';
+                renderHPAs();
+            }
+            
+            updateStats();
+        }
+
+        function updateStats() {
+            const totalHPAs = hpaData.length;
+            const readyHPAs = hpaData.filter(hpa => hpa.ready).length;
+            const activeScaling = hpaData.filter(hpa => hpa.currentReplicas !== hpa.desiredReplicas).length;
+            const totalReplicas = hpaData.reduce((sum, hpa) => sum + hpa.currentReplicas, 0);
+
+            document.getElementById('total-hpas').textContent = totalHPAs;
+            document.getElementById('ready-hpas').textContent = readyHPAs;
+            document.getElementById('active-scaling').textContent = activeScaling;
+            document.getElementById('total-replicas').textContent = totalReplicas;
+        }
+
+        function renderHPAs(filteredData = null) {
+            const hpaGrid = document.getElementById('hpa-grid');
+            hpaGrid.innerHTML = '';
+
+            const dataToRender = filteredData || hpaData;
+            dataToRender.forEach(hpa => {
+                const card = createHPACard(hpa);
+                hpaGrid.appendChild(card);
+            });
+        }
+
+        function createHPACard(hpa) {
+            const card = document.createElement('div');
+            card.className = 'hpa-card';
+            
+            if (!hpa.ready) {
+                card.className += ' danger';
+            } else if (hpa.currentReplicas !== hpa.desiredReplicas) {
+                card.className += ' warning';
+            }
+
+            const cpuUtilization = hpa.currentCPUUtilization || 'N/A';
+            const cpuTarget = hpa.targetCPUUtilization || 'N/A';
+            const lastScaleTime = hpa.lastScaleTime ? new Date(hpa.lastScaleTime).toLocaleString() : 'Never';
+
+            card.innerHTML = `
+                <div class="hpa-header">
+                    <div class="hpa-title">${hpa.name}</div>
+                    <div class="hpa-header-right">
+                        <span class="hpa-status-icon ${hpa.ready ? 'status-ready-icon' : 'status-not-ready-icon'}" title="${hpa.ready ? 'Ready' : 'Not Ready'}"></span>
+                        <div class="hpa-namespace">${hpa.namespace}</div>
+                    </div>
+                </div>
+                
+                <div class="hpa-metrics">
+                    <div class="metric">
+                        <div class="metric-label">${hpa.primaryMetricName || 'CPU'}</div>
+                        <div class="metric-value">
+                            ${(() => {
+                                const current = hpa.primaryMetricCurrent || (cpuUtilization !== 'N/A' ? cpuUtilization + '%' : 'N/A');
+                                const target = hpa.primaryMetricTarget || (cpuTarget !== 'N/A' ? cpuTarget + '%' : 'N/A');
+                                
+                                if (current === 'N/A' || target === 'N/A') {
+                                    return current + ' / ' + target;
+                                }
+                                
+                                // Extract unit from target (% or other)
+                                const unitMatch = target.match(/(%|[a-zA-Z]+)$/);
+                                const unit = unitMatch ? unitMatch[0] : '';
+                                
+                                // Remove unit from current if it has the same unit
+                                const currentValue = current.replace(unit, '');
+                                
+                                return currentValue + ' / ' + target;
+                            })()}
+                        </div>
+                    </div>
+                    <div class="metric">
+                        <div class="metric-label">Ratio</div>
+                        <div class="metric-value">${hpa.ratio ? hpa.ratio.toFixed(2) : 'N/A'}</div>
+                        ${hpa.ratio && hpa.tolerance ? 
+                            (Math.abs(hpa.ratio - 1.0) >= hpa.tolerance ? 
+                                '<div class="tolerance-warning">Exceeds tolerance</div>' : 
+                                '<div class="tolerance-ok">Within tolerance</div>') : ''}
+                    </div>
+                    <div class="metric metric-with-help">
+                        <div class="metric-label">Tolerance</div>
+                        <div class="metric-value">0.1</div>
+                        <button class="help-button" onclick="showToleranceHelp()" title="Tolerance Information">?</button>
+                    </div>
+                </div>
+
+                <div class="replica-info">
+                    <div class="replica-status replica-min">
+                        <span class="replica-label">Min</span>
+                        <div class="replica-value">${hpa.minReplicas}</div>
+                    </div>
+                    <div class="replica-status replica-current">
+                        <span class="replica-label">Current</span>
+                        <div class="replica-value">${hpa.currentReplicas}</div>
+                    </div>
+                    <div class="replica-status replica-desired">
+                        <span class="replica-label">Desired</span>
+                        <div class="replica-value">${hpa.desiredReplicas}</div>
+                    </div>
+                    <div class="replica-status replica-max">
+                        <span class="replica-label">Max</span>
+                        <div class="replica-value">${hpa.maxReplicas}</div>
+                    </div>
+                </div>
+
+                <div class="tolerance-info">
+                    <div class="tolerance-row">
+                        <span class="tolerance-label">Last Scale Time:</span>
+                        <span class="tolerance-value">${lastScaleTime}</span>
+                    </div>
+                </div>
+
+                <div class="status-indicators">
+                    <div class="status-indicator ${hpa.scaleUpStabilized ? 'status-stabilized' : 'status-not-ready'}">
+                        ${hpa.scaleUpStabilized ? 'Scale Up Stable' : 'Scale Up Active'}
+                    </div>
+                    <div class="status-indicator ${hpa.scaleDownStabilized ? 'status-stabilized' : 'status-not-ready'}">
+                        ${hpa.scaleDownStabilized ? 'Scale Down Stable' : 'Scale Down Active'}
+                    </div>
+                </div>
+
+                <button class="events-button" onclick="showEvents('${hpa.name}', '${hpa.namespace}')">
+                    Events
+                </button>
+            `;
+
+            return card;
+        }
+
+        // Initialize WebSocket connection
+        connectWebSocket();
+
+        // Handle page visibility changes
+        document.addEventListener('visibilitychange', function() {
+            if (document.hidden) {
+                if (ws) {
+                    ws.close();
+                }
+            } else {
+                if (!ws || ws.readyState === WebSocket.CLOSED) {
+                    connectWebSocket();
+                }
+            }
+        });
+
+        // Events modal functions
+        function showEvents(hpaName, hpaNamespace) {
+            const hpa = hpaData.find(h => h.name === hpaName && h.namespace === hpaNamespace);
+            if (!hpa) {
+                console.error('HPA not found:', hpaName, hpaNamespace);
+                return;
+            }
+
+            const modal = document.getElementById('eventsModal');
+            const title = document.getElementById('eventsModalTitle');
+            const content = document.getElementById('eventsModalContent');
+
+            title.textContent = `Events for ${hpaName} (${hpaNamespace})`;
+
+            if (!hpa.events || hpa.events.length === 0) {
+                content.innerHTML = '<p style="text-align: center; color: #666; padding: 2rem;">No events found for this HPA.</p>';
+            } else {
+                content.innerHTML = '';
+                hpa.events.forEach(event => {
+                    const eventElement = document.createElement('div');
+                    eventElement.className = 'event-item';
+                    
+                    if (event.type === 'Warning') {
+                        eventElement.className += ' warning';
+                    } else if (event.type === 'Error') {
+                        eventElement.className += ' error';
+                    }
+
+                    const lastTime = event.lastTimestamp !== 'Unknown' ? new Date(event.lastTimestamp).toLocaleString() : 'Unknown';
+                    const firstTime = event.firstTimestamp !== 'Unknown' ? new Date(event.firstTimestamp).toLocaleString() : 'Unknown';
+
+                    eventElement.innerHTML = `
+                        <div class="event-header">
+                            <span class="event-type">${event.type}</span>
+                            <span class="event-time">${lastTime}</span>
+                        </div>
+                        <div class="event-reason">${event.reason}</div>
+                        <div class="event-message">${event.message}</div>
+                        <div class="event-count">Count: ${event.count} | First: ${firstTime}</div>
+                    `;
+                    
+                    content.appendChild(eventElement);
+                });
+            }
+
+            modal.style.display = 'block';
+        }
+
+        function closeEventsModal() {
+            const modal = document.getElementById('eventsModal');
+            modal.style.display = 'none';
+        }
+
+        // Tolerance help modal functions
+        function showToleranceHelp() {
+            const modal = document.getElementById('toleranceModal');
+            modal.style.display = 'block';
+        }
+
+        function closeToleranceModal() {
+            const modal = document.getElementById('toleranceModal');
+            modal.style.display = 'none';
+        }
+
+        // Close modal when clicking outside
+        window.onclick = function(event) {
+            const eventsModal = document.getElementById('eventsModal');
+            const toleranceModal = document.getElementById('toleranceModal');
+            
+            if (event.target === eventsModal) {
+                closeEventsModal();
+            } else if (event.target === toleranceModal) {
+                closeToleranceModal();
+            }
+        };
+
+        // Countdown timer functions
+        function startCountdown() {
+            remainingTime = refreshInterval;
+            updateCountdownDisplay();
+            
+            countdownTimer = setInterval(function() {
+                remainingTime--;
+                updateCountdownDisplay();
+                
+                if (remainingTime <= 0) {
+                    resetCountdown();
+                }
+            }, 1000);
+        }
+
+        function resetCountdown() {
+            if (countdownTimer) {
+                clearInterval(countdownTimer);
+            }
+            startCountdown();
+        }
+
+        function updateCountdownDisplay() {
+            const countdownElement = document.getElementById('countdown');
+            if (countdownElement) {
+                countdownElement.textContent = remainingTime;
+            }
+        }
+
+        // Load configuration from server
+        async function loadConfig() {
+            try {
+                const response = await fetch('/api/config');
+                const config = await response.json();
+                refreshInterval = config.websocketInterval;
+                remainingTime = refreshInterval;
+                console.log('Loaded config:', config);
+            } catch (error) {
+                console.error('Failed to load config:', error);
+                // Keep default value
+            }
+        }
+
+        // Load version from server
+        async function loadVersion() {
+            try {
+                const response = await fetch('/api/version');
+                const version = await response.json();
+                document.getElementById('version').textContent = version.version;
+                console.log('Loaded version:', version);
+            } catch (error) {
+                console.error('Failed to load version:', error);
+                document.getElementById('version').textContent = 'unknown';
+            }
+        }
+
+        // Filter HPAs by name
+        function filterHPAs() {
+            const searchTerm = document.getElementById('search-input').value.toLowerCase().trim();
+            
+            if (!searchTerm) {
+                renderHPAs();
+                return;
+            }
+
+            const filteredData = hpaData.filter(hpa => 
+                hpa.name.toLowerCase().includes(searchTerm) ||
+                hpa.namespace.toLowerCase().includes(searchTerm)
+            );
+
+            renderHPAs(filteredData);
+
+            // Update no-data message for search results
+            const hpaGrid = document.getElementById('hpa-grid');
+            const noData = document.getElementById('no-data');
+            
+            if (filteredData.length === 0 && hpaData.length > 0) {
+                hpaGrid.style.display = 'none';
+                noData.style.display = 'block';
+                noData.innerHTML = '<h3>No matching HPAs found</h3><p>Try adjusting your search terms.</p>';
+            } else if (filteredData.length > 0) {
+                hpaGrid.style.display = 'grid';
+                noData.style.display = 'none';
+            }
+        }
+
+        // Start countdown when page loads
+        document.addEventListener('DOMContentLoaded', async function() {
+            await loadConfig();
+            await loadVersion();
+            startCountdown();
+        });
+    </script>
+</body>
+</html>
