@@ -12,7 +12,7 @@ The dashboard provides real-time monitoring of HPA resources with tolerance calc
 
 ## Features
 
-- Real-time HPA monitoring with tolerance calculations
+- Real-time HPA monitoring with tolerance calculations using native Kubernetes API
 - Multi-metric support (CPU, memory, custom metrics)
 - WebSocket-based live updates
 - Kubernetes events tracking
@@ -44,6 +44,8 @@ make test
 
 #### Helm Installation
 
+HPA Monitor provides a Helm chart for easy deployment to Kubernetes clusters with RBAC configuration, customizable values, and follows Kubernetes best practices.
+
 ```bash
 # Install from a specific values file
 helm upgrade --install hpa-monitor ./charts/hpa-monitor \
@@ -64,15 +66,23 @@ make deploy
 
 ### Access
 
-- Web Dashboard: http://localhost:8080 (or port-forward)
-- NodePort: http://localhost:30080 (KWOK cluster)
+For local development, run `go run cmd/hpa-monitor/main.go` and access the dashboard at http://localhost:8080.
+
+For Kubernetes deployments, use port-forwarding to access the dashboard:
+
+```bash
+# Port-forward to access the dashboard
+kubectl port-forward svc/hpa-monitor 8080:8080 -n hpa-monitor
+# Then access at http://localhost:8080
+```
 
 ## Configuration
 
 Environment variables:
 - `PORT` - Server port (default: 8080)
 - `WEBSOCKET_INTERVAL` - Update interval in seconds (default: 5)
-- `TOLERANCE` - HPA tolerance percentage (default: 0.1)
+- `TOLERANCE` - HPA tolerance percentage, 0.1 means 10% (default: 0.1) - [Kubernetes HPA Tolerance](https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/#tolerance)
+- `LOG_LEVEL` - Log level: debug, info, warn, error, fatal, panic (default: info)
 
 ## Commands
 
@@ -89,7 +99,9 @@ make clean            # Clean artifacts
 
 ## Architecture
 
-- **Backend**: Go with Gin framework
+HPA Monitor is built with a lightweight Go backend that directly interfaces with the Kubernetes API to monitor HPA resources and stream real-time data to a responsive web dashboard.
+
+- **Backend**: Go with Gin framework for HTTP server and WebSocket-based real-time HPA data streaming
 - **Frontend**: HTML/JavaScript with WebSocket
 - **Deployment**: Helm chart with RBAC
-- **Monitoring**: Kubernetes client-go with custom tolerance logic
+- **Monitoring**: Kubernetes client-go with custom [tolerance logic](https://kubernetes.io/docs/tasks/run-application/horizontal-pod-autoscale/#tolerance)

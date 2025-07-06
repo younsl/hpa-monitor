@@ -4,517 +4,25 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>HPA Monitor</title>
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
-        body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            background-color: #0d1117;
-            color: #f0f6fc;
-            line-height: 1.6;
-        }
-
-        .container {
-            max-width: 1400px;
-            margin: 0 auto;
-            padding: 20px;
-        }
-
-        .header {
-            background: #161b22;
-            color: #f0f6fc;
-            padding: 2rem;
-            border-radius: 8px;
-            margin-bottom: 2rem;
-            text-align: center;
-            border: 1px solid #30363d;
-        }
-
-        .header h1 {
-            font-size: 2.5rem;
-            margin-bottom: 0.5rem;
-        }
-
-        .header p {
-            font-size: 1.1rem;
-            opacity: 0.9;
-        }
-
-        .stats {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 1rem;
-            margin-bottom: 2rem;
-        }
-
-        .stat-card {
-            background: #161b22;
-            padding: 1.5rem;
-            border-radius: 8px;
-            border: 1px solid #30363d;
-            text-align: center;
-        }
-
-        .stat-card h3 {
-            color: #7d8590;
-            font-size: 0.9rem;
-            margin-bottom: 0.5rem;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
-        }
-
-        .stat-card .value {
-            font-size: 2rem;
-            font-weight: bold;
-            color: #f0f6fc;
-        }
-
-        .hpa-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
-            gap: 1.5rem;
-        }
-
-        .hpa-card {
-            background: #161b22;
-            border-radius: 8px;
-            padding: 1.5rem;
-            border: 1px solid #30363d;
-            border-left: 3px solid #58a6ff;
-            transition: transform 0.2s ease;
-        }
-
-        .hpa-card:hover {
-            transform: translateY(-2px);
-        }
-
-        .hpa-card.warning {
-            border-left-color: #f1e05a;
-        }
-
-        .hpa-card.danger {
-            border-left-color: #f85149;
-        }
-
-        .hpa-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 1rem;
-        }
-
-        .hpa-title {
-            font-size: 1.2rem;
-            font-weight: bold;
-            color: #f0f6fc;
-        }
-
-        .hpa-header-right {
-            display: flex;
-            align-items: center;
-            gap: 0.5rem;
-        }
-
-        .hpa-status-icon {
-            width: 12px;
-            height: 12px;
-            border-radius: 50%;
-            display: inline-block;
-        }
-
-        .status-ready-icon {
-            background: #238636;
-        }
-
-        .status-not-ready-icon {
-            background: #da3633;
-        }
-
-        .hpa-namespace {
-            background: #58a6ff;
-            color: #0d1117;
-            padding: 0.2rem 0.5rem;
-            border-radius: 12px;
-            font-size: 0.8rem;
-        }
-
-        .hpa-metrics {
-            display: grid;
-            grid-template-columns: 2fr 2fr 1fr;
-            gap: 1rem;
-            margin-bottom: 1rem;
-        }
-
-        .metric {
-            text-align: center;
-            padding: 0.5rem;
-            background: #21262d;
-            border-radius: 6px;
-            border: 1px solid #30363d;
-        }
-
-        .metric-label {
-            font-size: 0.8rem;
-            color: #7d8590;
-            margin-bottom: 0.25rem;
-        }
-
-        .metric-value {
-            font-size: 1.1rem;
-            font-weight: bold;
-            color: #f0f6fc;
-        }
-
-        .tolerance-warning {
-            font-size: 0.7rem;
-            color: #f1e05a;
-            margin-top: 0.25rem;
-            font-weight: 500;
-        }
-
-        .tolerance-ok {
-            font-size: 0.7rem;
-            color: #238636;
-            margin-top: 0.25rem;
-            font-weight: 500;
-        }
-
-        .metric-with-help {
-            position: relative;
-        }
-
-        .help-button {
-            position: absolute;
-            bottom: 0.25rem;
-            right: 0.25rem;
-            width: 16px;
-            height: 16px;
-            border-radius: 50%;
-            background: #30363d;
-            color: #7d8590;
-            border: none;
-            cursor: pointer;
-            font-size: 0.7rem;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            transition: background 0.2s ease;
-        }
-
-        .help-button:hover {
-            background: #58a6ff;
-            color: #f0f6fc;
-        }
-
-        .replica-info {
-            background: #21262d;
-            padding: 1rem;
-            border-radius: 6px;
-            border: 1px solid #30363d;
-            margin-bottom: 1rem;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-
-        .replica-status {
-            text-align: center;
-            flex: 1;
-            position: relative;
-        }
-
-        .replica-status:not(:last-child)::after {
-            content: '';
-            position: absolute;
-            right: 0;
-            top: 20%;
-            bottom: 20%;
-            width: 1px;
-            background: #30363d;
-        }
-
-        .replica-label {
-            font-size: 0.8rem;
-            color: #7d8590;
-            display: block;
-            margin-bottom: 0.25rem;
-        }
-
-        .replica-value {
-            font-size: 1.2rem;
-            font-weight: bold;
-        }
-
-        .replica-min .replica-value {
-            color: #7d8590;
-        }
-
-        .replica-current .replica-value {
-            color: #58a6ff;
-        }
-
-        .replica-desired .replica-value {
-            color: #f1e05a;
-        }
-
-        .replica-max .replica-value {
-            color: #7d8590;
-        }
-
-        .tolerance-info {
-            background: #21262d;
-            padding: 0.75rem;
-            border-radius: 6px;
-            border: 1px solid #30363d;
-        }
-
-        .tolerance-row {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 0.25rem;
-        }
-
-        .tolerance-row:last-child {
-            margin-bottom: 0;
-        }
-
-        .tolerance-label {
-            font-size: 0.8rem;
-            color: #58a6ff;
-            font-weight: 500;
-        }
-
-        .tolerance-value {
-            font-weight: bold;
-            color: #58a6ff;
-        }
-
-        .status-indicators {
-            display: flex;
-            gap: 0.5rem;
-            margin-top: 1rem;
-        }
-
-        .status-indicator {
-            padding: 0.25rem 0.5rem;
-            border-radius: 12px;
-            font-size: 0.8rem;
-            font-weight: 500;
-        }
-
-        .status-ready {
-            background: #238636;
-            color: #f0f6fc;
-        }
-
-        .status-not-ready {
-            background: #da3633;
-            color: #f0f6fc;
-        }
-
-        .status-stabilized {
-            background: #1f6feb;
-            color: #f0f6fc;
-        }
-
-        .connection-status {
-            position: fixed;
-            top: 20px;
-            right: 20px;
-            padding: 0.5rem 1rem;
-            border-radius: 20px;
-            font-size: 0.9rem;
-            font-weight: 500;
-            z-index: 1000;
-        }
-
-        .connection-status.connected {
-            background: #238636;
-            color: #f0f6fc;
-        }
-
-        .connection-status.disconnected {
-            background: #da3633;
-            color: #f0f6fc;
-        }
-
-        .events-button {
-            background: #238636;
-            color: #f0f6fc;
-            border: none;
-            padding: 0.5rem 1rem;
-            border-radius: 6px;
-            cursor: pointer;
-            font-size: 0.9rem;
-            margin-top: 1rem;
-            transition: background 0.2s ease;
-        }
-
-        .events-button:hover {
-            background: #2ea043;
-        }
-
-        .modal {
-            display: none;
-            position: fixed;
-            z-index: 1000;
-            left: 0;
-            top: 0;
-            width: 100%;
-            height: 100%;
-            background-color: rgba(0,0,0,0.7);
-        }
-
-        .modal-content {
-            background-color: #161b22;
-            margin: 5% auto;
-            padding: 20px;
-            border: 1px solid #30363d;
-            border-radius: 8px;
-            width: 80%;
-            max-width: 800px;
-            max-height: 80vh;
-            overflow-y: auto;
-        }
-
-        .close {
-            color: #7d8590;
-            float: right;
-            font-size: 28px;
-            font-weight: bold;
-            cursor: pointer;
-        }
-
-        .close:hover {
-            color: #f0f6fc;
-        }
-
-        .events-list {
-            max-height: 60vh;
-            overflow-y: auto;
-        }
-
-        .event-item {
-            background: #21262d;
-            border-left: 3px solid #58a6ff;
-            border: 1px solid #30363d;
-            padding: 1rem;
-            margin-bottom: 1rem;
-            border-radius: 6px;
-        }
-
-        .event-item.warning {
-            border-left-color: #f1e05a;
-        }
-
-        .event-item.error {
-            border-left-color: #f85149;
-        }
-
-        .event-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 0.5rem;
-        }
-
-        .event-type {
-            font-weight: bold;
-            color: #58a6ff;
-        }
-
-        .event-time {
-            font-size: 0.8rem;
-            color: #7d8590;
-        }
-
-        .event-reason {
-            font-weight: 500;
-            color: #f0f6fc;
-            margin-bottom: 0.25rem;
-        }
-
-        .event-message {
-            color: #7d8590;
-            line-height: 1.4;
-        }
-
-        .event-count {
-            font-size: 0.8rem;
-            color: #7d8590;
-            margin-top: 0.25rem;
-        }
-
-        .loading {
-            text-align: center;
-            padding: 2rem;
-            color: #7d8590;
-        }
-
-        .no-data {
-            text-align: center;
-            padding: 2rem;
-            color: #7d8590;
-            background: #161b22;
-            border-radius: 8px;
-            border: 1px solid #30363d;
-        }
-
-        .search-container {
-            margin-bottom: 2rem;
-            text-align: center;
-        }
-
-        .search-input {
-            width: 100%;
-            max-width: 400px;
-            padding: 0.75rem 1rem;
-            font-size: 1rem;
-            background: #21262d;
-            border: 1px solid #30363d;
-            border-radius: 8px;
-            color: #f0f6fc;
-            outline: none;
-            transition: border-color 0.2s ease;
-        }
-
-        .search-input:focus {
-            border-color: #58a6ff;
-        }
-
-        .search-input::placeholder {
-            color: #7d8590;
-        }
-
-        @media (max-width: 768px) {
-            .container {
-                padding: 10px;
-            }
-            
-            .header h1 {
-                font-size: 2rem;
-            }
-            
-            .hpa-grid {
-                grid-template-columns: 1fr;
-            }
-            
-            .hpa-metrics {
-                grid-template-columns: 1fr 1fr;
-            }
-        }
-    </style>
+    <link rel="stylesheet" href="/style.css">
 </head>
 <body>
     <div class="container">
         <div class="header">
             <h1>HPA Monitor</h1>
             <p>Real-time Horizontal Pod Autoscaler monitoring with 10% tolerance</p>
+            
+            <div class="version-info" id="version-info" onclick="window.open('https://github.com/younsl/hpa-monitor', '_blank')" style="cursor: pointer;">
+                Version: <span id="version">--</span>
+            </div>
+
+            <div class="connection-status" id="connection-status">
+                Connecting...
+            </div>
+
+            <div class="connection-status" id="refresh-timer" style="bottom: 4rem; right: 1rem;">
+                Next refresh in: <span id="countdown">--</span>s
+            </div>
         </div>
 
         <div class="stats">
@@ -540,13 +48,6 @@
             <input type="text" id="search-input" class="search-input" placeholder="Search HPA by name..." oninput="filterHPAs()">
         </div>
 
-        <div class="connection-status" id="connection-status">
-            Connecting...
-        </div>
-
-        <div class="connection-status" id="refresh-timer" style="top: 70px;">
-            Next refresh in: <span id="countdown">--</span>s
-        </div>
 
         <div class="loading" id="loading">
             Loading HPA data...
@@ -941,6 +442,19 @@
             }
         }
 
+        // Load version from server
+        async function loadVersion() {
+            try {
+                const response = await fetch('/api/version');
+                const version = await response.json();
+                document.getElementById('version').textContent = version.version;
+                console.log('Loaded version:', version);
+            } catch (error) {
+                console.error('Failed to load version:', error);
+                document.getElementById('version').textContent = 'unknown';
+            }
+        }
+
         // Filter HPAs by name
         function filterHPAs() {
             const searchTerm = document.getElementById('search-input').value.toLowerCase().trim();
@@ -974,6 +488,7 @@
         // Start countdown when page loads
         document.addEventListener('DOMContentLoaded', async function() {
             await loadConfig();
+            await loadVersion();
             startCountdown();
         });
     </script>
