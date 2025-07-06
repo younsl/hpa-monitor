@@ -10,7 +10,7 @@ HPA Monitor is a Kubernetes HPA (Horizontal Pod Autoscaler) monitoring applicati
 
 - **Backend**: Go with Gin framework (`pkg/server/server.go`)
 - **HPA Monitoring**: Custom monitor package (`pkg/monitor/monitor.go`) using Kubernetes client-go
-- **Frontend**: HTML template with JavaScript (`web/templates/index.html`)
+- **Frontend**: HTML template with JavaScript (`web/index.html`)
 - **Deployment**: Helm chart (`charts/hpa-monitor/`) with RBAC and service configurations
 - **Testing**: KWOK cluster support for local development
 
