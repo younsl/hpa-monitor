@@ -15,7 +15,9 @@ RUN go mod download
 COPY . .
 
 # Build the application
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o hpa-monitor ./cmd/hpa-monitor
+ARG VERSION=dev
+ARG COMMIT=unknown
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -ldflags "-X 'hpa-monitor/pkg/server.Version=${VERSION}' -X 'hpa-monitor/pkg/server.Commit=${COMMIT}'" -o hpa-monitor ./cmd/hpa-monitor
 
 # Final stage
 FROM alpine:latest

@@ -4,14 +4,18 @@
 IMAGE_NAME = hpa-monitor
 IMAGE_TAG = latest
 
+# Version information
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
+LDFLAGS = -X 'hpa-monitor/pkg/server.Version=$(VERSION)'
+
 # Build the Go application
 build:
 	go mod tidy
-	go build -o bin/hpa-monitor .
+	go build -ldflags "$(LDFLAGS)" -o bin/hpa-monitor .
 
 # Run the application locally
 run:
-	go run .
+	go run -ldflags "$(LDFLAGS)" .
 
 # Test the application
 test:
@@ -24,7 +28,7 @@ clean:
 
 # Build Docker image
 docker-build:
-	podman build -t $(IMAGE_NAME):$(IMAGE_TAG) .
+	podman build --build-arg VERSION=$(VERSION) -t $(IMAGE_NAME):$(IMAGE_TAG) .
 
 # Load Docker image to KWOK cluster
 docker-load:
