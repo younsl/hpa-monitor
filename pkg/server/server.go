@@ -13,6 +13,9 @@ import (
 	"hpa-monitor/pkg/monitor"
 )
 
+// Version is set by build flags
+var Version = "dev"
+
 // Server handles HTTP requests and WebSocket connections
 type Server struct {
 	hpaMonitor *monitor.HPAMonitor
@@ -40,14 +43,15 @@ func NewServer(hpaMonitor *monitor.HPAMonitor, cfg *config.Config) *Server {
 
 // SetupRoutes configures the HTTP routes
 func (s *Server) SetupRoutes(r *gin.Engine) {
-	// Serve static files
-	r.Static("/static", "./web/static")
-	r.LoadHTMLGlob("web/templates/*")
+	// Serve static files from web directory
+	r.StaticFile("/style.css", "./web/style.css")
+	r.LoadHTMLGlob("web/*")
 
 	// Routes
 	r.GET("/", s.handleIndex)
 	r.GET("/api/hpa", s.handleHTTP)
 	r.GET("/api/config", s.handleConfig)
+	r.GET("/api/version", s.handleVersion)
 	r.GET("/ws", s.handleWebSocket)
 	r.GET("/health", s.handleHealth)
 }
@@ -126,6 +130,11 @@ func (s *Server) handleWebSocket(c *gin.Context) {
 			}).Debug("WebSocket data sent")
 		}
 	}
+}
+
+// handleVersion handles version API requests
+func (s *Server) handleVersion(c *gin.Context) {
+	c.JSON(http.StatusOK, gin.H{"version": Version})
 }
 
 // handleHealth handles health check requests
