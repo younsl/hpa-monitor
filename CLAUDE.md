@@ -10,7 +10,7 @@ HPA Monitor is a Kubernetes HPA (Horizontal Pod Autoscaler) monitoring applicati
 
 - **Backend**: Go with Gin framework (`pkg/server/server.go`)
 - **HPA Monitoring**: Custom monitor package (`pkg/monitor/monitor.go`) using Kubernetes client-go
-- **Frontend**: HTML template with JavaScript (`web/index.html`)
+- **Frontend**: Standalone HTML file with separate CSS (`web/index.html`, `web/style.css`)
 - **Deployment**: Helm chart (`charts/hpa-monitor/`) with RBAC and service configurations
 - **Testing**: KWOK cluster support for local development
 
@@ -21,7 +21,7 @@ HPA Monitor is a Kubernetes HPA (Horizontal Pod Autoscaler) monitoring applicati
 - `pkg/k8s/` - Kubernetes client setup
 - `pkg/logger/` - Structured logging with logrus
 - `pkg/monitor/` - Core HPA monitoring logic with tolerance calculations
-- `pkg/server/` - HTTP server and WebSocket handler
+- `pkg/server/` - HTTP server and WebSocket handler with version endpoint
 
 ## Common Commands
 
@@ -67,6 +67,12 @@ make status
 make clean-kwok
 ```
 
+### Version Management
+When releasing new versions:
+1. Update `charts/hpa-monitor/Chart.yaml` (both `version` and `appVersion`)
+2. Build process automatically injects version info via `-ldflags`
+3. Version available at `/api/version` endpoint
+
 ## Key Features
 
 - **Tolerance Calculation**: Applies 10% tolerance to min/max replicas (`ToleranceAdjustedMin`, `ToleranceAdjustedMax`)
@@ -81,6 +87,7 @@ Configuration is handled through environment variables and defaults in `pkg/conf
 - `PORT` - Server port (default: 8080)
 - `WEBSOCKET_INTERVAL` - WebSocket update interval in seconds (default: 5)
 - `TOLERANCE` - HPA tolerance percentage (default: 0.1)
+- `LOG_LEVEL` - Log level: debug, info, warn, error, fatal, panic (default: info)
 
 ## Deployment Notes
 
@@ -89,3 +96,4 @@ Configuration is handled through environment variables and defaults in `pkg/conf
 - Supports both NodePort (30080) and port-forward access
 - Helm chart includes PodDisruptionBudget and configurable resource limits
 - Designed for KWOK cluster testing but works with real Kubernetes clusters
+- Build process supports version injection via Docker build args
