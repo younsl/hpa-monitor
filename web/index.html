@@ -291,17 +291,18 @@
                 </div>
 
                 <div class="status-indicators">
-                    <div class="status-indicator ${hpa.scaleUpStabilized ? 'status-stabilized' : 'status-not-ready'}">
-                        ${hpa.scaleUpStabilized ? 'Scale Up Stable' : 'Scale Up Active'}
+                    <div class="scale-indicators">
+                        <div class="status-indicator ${hpa.scaleUpStabilized ? 'status-stabilized' : 'status-not-ready'}">
+                            ${hpa.scaleUpStabilized ? 'Scale Up Stable' : 'Scale Up Active'}
+                        </div>
+                        <div class="status-indicator ${hpa.scaleDownStabilized ? 'status-stabilized' : 'status-not-ready'}">
+                            ${hpa.scaleDownStabilized ? 'Scale Down Stable' : 'Scale Down Active'}
+                        </div>
                     </div>
-                    <div class="status-indicator ${hpa.scaleDownStabilized ? 'status-stabilized' : 'status-not-ready'}">
-                        ${hpa.scaleDownStabilized ? 'Scale Down Stable' : 'Scale Down Active'}
-                    </div>
+                    <button class="events-button" onclick="showEvents('${hpa.name}', '${hpa.namespace}')">
+                        Events
+                    </button>
                 </div>
-
-                <button class="events-button" onclick="showEvents('${hpa.name}', '${hpa.namespace}')">
-                    Events
-                </button>
             `;
 
             return card;
