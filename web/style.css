@@ -290,8 +290,14 @@ body {
 
 .status-indicators {
     display: flex;
-    gap: 0.5rem;
+    justify-content: space-between;
+    align-items: center;
     margin-top: 1rem;
+}
+
+.scale-indicators {
+    display: flex;
+    gap: 0.5rem;
 }
 
 .status-indicator {
@@ -366,7 +372,6 @@ body {
     border-radius: 6px;
     cursor: pointer;
     font-size: 0.9rem;
-    margin-top: 1rem;
     transition: background 0.2s ease;
 }
 
