@@ -9,6 +9,7 @@ import (
 	"time"
 
 	autoscalingv2 "k8s.io/api/autoscaling/v2"
+	v1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 
@@ -45,28 +46,7 @@ func (hm *HPAMonitor) GetHPAStatus(ctx context.Context) ([]HPAStatus, error) {
 	for _, hpa := range hpaList.Items {
 		status := hm.buildHPAStatus(&hpa)
 		hpaStatuses = append(hpaStatuses, status)
-		
-		// Log summary for this HPA
-		currentVal := "N/A"
-		targetVal := "N/A"
-		if status.PrimaryMetricCurrent != nil {
-			currentVal = *status.PrimaryMetricCurrent
-		}
-		if status.PrimaryMetricTarget != nil {
-			targetVal = *status.PrimaryMetricTarget
-		}
-		
-		log.WithFields(logger.Fields{
-			"namespace":       hpa.Namespace,
-			"name":           hpa.Name,
-			"metric":         status.PrimaryMetricName,
-			"current":        currentVal,
-			"target":         targetVal,
-			"current_replicas": status.CurrentReplicas,
-			"desired_replicas": status.DesiredReplicas,
-			"min_replicas":   status.MinReplicas,
-			"max_replicas":   status.MaxReplicas,
-		}).Debug("HPA status processed")
+		hm.logHPAStatus(&hpa, &status)
 	}
 
 	return hpaStatuses, nil
@@ -74,124 +54,119 @@ func (hm *HPAMonitor) GetHPAStatus(ctx context.Context) ([]HPAStatus, error) {
 
 // buildHPAStatus builds HPAStatus from Kubernetes HPA resource
 func (hm *HPAMonitor) buildHPAStatus(hpa *autoscalingv2.HorizontalPodAutoscaler) HPAStatus {
-	status := HPAStatus{
-		Name:            hpa.Name,
-		Namespace:       hpa.Namespace,
-		MinReplicas:     *hpa.Spec.MinReplicas,
-		MaxReplicas:     hpa.Spec.MaxReplicas,
-		CurrentReplicas: hpa.Status.CurrentReplicas,
-		DesiredReplicas: hpa.Status.DesiredReplicas,
-		Ready:           len(hpa.Status.Conditions) > 0,
-	}
-
-	// Set tolerance value
-	status.Tolerance = hm.tolerance
-
-	// Apply tolerance to min/max replicas
-	status.ToleranceAdjustedMin = int32(math.Ceil(float64(status.MinReplicas) * (1 - hm.tolerance)))
-	status.ToleranceAdjustedMax = int32(math.Floor(float64(status.MaxReplicas) * (1 + hm.tolerance)))
-
-	// Extract CPU utilization metrics
+	status := hm.initializeHPAStatus(hpa)
+	
 	hm.extractMetrics(hpa, &status)
-
-	// Check scaling conditions
 	hm.checkScalingConditions(hpa, &status)
-
-	// Check last scale time
 	hm.setLastScaleTime(hpa, &status)
-
-	// Check scaling stabilization
 	hm.checkScalingStabilization(hpa, &status)
-
-	// Fetch events for the HPA
 	hm.fetchEvents(hpa, &status)
 
 	return status
 }
 
+// initializeHPAStatus initializes basic HPA status fields
+func (hm *HPAMonitor) initializeHPAStatus(hpa *autoscalingv2.HorizontalPodAutoscaler) HPAStatus {
+	minReplicas := int32(1)
+	if hpa.Spec.MinReplicas != nil {
+		minReplicas = *hpa.Spec.MinReplicas
+	}
+	
+	return HPAStatus{
+		Name:            hpa.Name,
+		Namespace:       hpa.Namespace,
+		MinReplicas:     minReplicas,
+		MaxReplicas:     hpa.Spec.MaxReplicas,
+		CurrentReplicas: hpa.Status.CurrentReplicas,
+		DesiredReplicas: hpa.Status.DesiredReplicas,
+		Ready:           len(hpa.Status.Conditions) > 0,
+		Tolerance:       hm.tolerance,
+		ToleranceAdjustedMin: int32(math.Ceil(float64(minReplicas) * (1 - hm.tolerance))),
+		ToleranceAdjustedMax: int32(math.Floor(float64(hpa.Spec.MaxReplicas) * (1 + hm.tolerance))),
+	}
+}
+
+// logHPAStatus logs HPA processing summary
+func (hm *HPAMonitor) logHPAStatus(hpa *autoscalingv2.HorizontalPodAutoscaler, status *HPAStatus) {
+	log := logger.GetLogger()
+	
+	currentVal := hm.getStringValue(status.PrimaryMetricCurrent)
+	targetVal := hm.getStringValue(status.PrimaryMetricTarget)
+	
+	log.WithFields(logger.Fields{
+		"namespace":        hpa.Namespace,
+		"name":            hpa.Name,
+		"metric":          status.PrimaryMetricName,
+		"current":         currentVal,
+		"target":          targetVal,
+		"current_replicas": status.CurrentReplicas,
+		"desired_replicas": status.DesiredReplicas,
+		"min_replicas":    status.MinReplicas,
+		"max_replicas":    status.MaxReplicas,
+	}).Debug("HPA status processed")
+}
+
+// getStringValue safely gets string value from pointer
+func (hm *HPAMonitor) getStringValue(ptr *string) string {
+	if ptr != nil {
+		return *ptr
+	}
+	return "N/A"
+}
+
 // extractMetrics extracts all types of metrics from HPA
 func (hm *HPAMonitor) extractMetrics(hpa *autoscalingv2.HorizontalPodAutoscaler, status *HPAStatus) {
-	
-	// Extract target metrics (first metric becomes primary)
-	for i, metric := range hpa.Spec.Metrics {
-		if i == 0 { // Use first metric as primary
-			switch metric.Type {
-			case autoscalingv2.ResourceMetricSourceType:
-				status.PrimaryMetricName = string(metric.Resource.Name)
-				if metric.Resource.Target.AverageUtilization != nil {
-					target := fmt.Sprintf("%d%%", *metric.Resource.Target.AverageUtilization)
-					status.PrimaryMetricTarget = &target
-				}
-				// Still handle CPU for backwards compatibility
-				if metric.Resource.Name == "cpu" && metric.Resource.Target.AverageUtilization != nil {
-					status.TargetCPUUtilization = metric.Resource.Target.AverageUtilization
-				}
-			case autoscalingv2.ExternalMetricSourceType:
-				status.PrimaryMetricName = metric.External.Metric.Name
-				if metric.External.Target.AverageValue != nil {
-					target := metric.External.Target.AverageValue.String()
-					status.PrimaryMetricTarget = &target
-				} else if metric.External.Target.Value != nil {
-					target := metric.External.Target.Value.String()
-					status.PrimaryMetricTarget = &target
-				}
-			case autoscalingv2.ObjectMetricSourceType:
-				status.PrimaryMetricName = metric.Object.Metric.Name
-				if metric.Object.Target.AverageValue != nil {
-					target := metric.Object.Target.AverageValue.String()
-					status.PrimaryMetricTarget = &target
-				} else if metric.Object.Target.Value != nil {
-					target := metric.Object.Target.Value.String()
-					status.PrimaryMetricTarget = &target
-				}
-			}
-		}
+	// Extract primary metric (first metric in spec)
+	if len(hpa.Spec.Metrics) > 0 {
+		hm.extractTargetMetric(hpa.Spec.Metrics[0], status)
 	}
 
-	// Extract current metrics
-	for i, metric := range hpa.Status.CurrentMetrics {
-		if i == 0 { // Use first metric as primary
-			switch metric.Type {
-			case autoscalingv2.ResourceMetricSourceType:
-				if metric.Resource.Current.AverageUtilization != nil {
-					current := fmt.Sprintf("%d%%", *metric.Resource.Current.AverageUtilization)
-					status.PrimaryMetricCurrent = &current
-				}
-				// Still handle CPU for backwards compatibility
-				if metric.Resource.Name == "cpu" && metric.Resource.Current.AverageUtilization != nil {
-					status.CurrentCPUUtilization = metric.Resource.Current.AverageUtilization
-				}
-			case autoscalingv2.ExternalMetricSourceType:
-				if metric.External.Current.AverageValue != nil {
-					current := metric.External.Current.AverageValue.String()
-					status.PrimaryMetricCurrent = &current
-				} else if metric.External.Current.Value != nil {
-					current := metric.External.Current.Value.String()
-					status.PrimaryMetricCurrent = &current
-				}
-			case autoscalingv2.ObjectMetricSourceType:
-				if metric.Object.Current.AverageValue != nil {
-					current := metric.Object.Current.AverageValue.String()
-					status.PrimaryMetricCurrent = &current
-				} else if metric.Object.Current.Value != nil {
-					current := metric.Object.Current.Value.String()
-					status.PrimaryMetricCurrent = &current
-				}
-			}
-		}
+	// Extract current metric values
+	if len(hpa.Status.CurrentMetrics) > 0 {
+		hm.extractCurrentMetric(hpa.Status.CurrentMetrics[0], status)
 	}
 
-	// Calculate ratio (Current/Target) for all metric types
-	ratio := calculateRatio(status)
-	if ratio != nil {
+	// Calculate ratio and set defaults
+	hm.finalizeMetrics(status)
+}
+
+// extractTargetMetric extracts target metric information
+func (hm *HPAMonitor) extractTargetMetric(metric autoscalingv2.MetricSpec, status *HPAStatus) {
+	switch metric.Type {
+	case autoscalingv2.ResourceMetricSourceType:
+		hm.handleResourceTarget(metric.Resource, status)
+	case autoscalingv2.ContainerResourceMetricSourceType:
+		hm.handleContainerResourceTarget(metric.ContainerResource, status)
+	case autoscalingv2.ExternalMetricSourceType:
+		hm.handleExternalTarget(metric.External, status)
+	case autoscalingv2.ObjectMetricSourceType:
+		hm.handleObjectTarget(metric.Object, status)
+	}
+}
+
+// extractCurrentMetric extracts current metric values
+func (hm *HPAMonitor) extractCurrentMetric(metric autoscalingv2.MetricStatus, status *HPAStatus) {
+	switch metric.Type {
+	case autoscalingv2.ResourceMetricSourceType:
+		hm.handleResourceCurrent(metric.Resource, status)
+	case autoscalingv2.ContainerResourceMetricSourceType:
+		hm.handleContainerResourceCurrent(metric.ContainerResource, status)
+	case autoscalingv2.ExternalMetricSourceType:
+		hm.handleExternalCurrent(metric.External, status)
+	case autoscalingv2.ObjectMetricSourceType:
+		hm.handleObjectCurrent(metric.Object, status)
+	}
+}
+
+// finalizeMetrics calculates ratio and sets default values
+func (hm *HPAMonitor) finalizeMetrics(status *HPAStatus) {
+	if ratio := calculateRatio(status); ratio != nil {
 		status.Ratio = ratio
 	}
 
-	// Set default primary metric name if none found
 	if status.PrimaryMetricName == "" {
 		status.PrimaryMetricName = "Unknown"
 	}
-
 }
 
 // checkScalingConditions checks HPA conditions for readiness
@@ -269,29 +244,150 @@ func (hm *HPAMonitor) fetchEvents(hpa *autoscalingv2.HorizontalPodAutoscaler, st
 
 	var hpaEvents []Event
 	for _, event := range events.Items {
-		hpaEvent := Event{
-			Type:    event.Type,
-			Reason:  event.Reason,
-			Message: event.Message,
-			Count:   event.Count,
-		}
-		
-		if event.FirstTimestamp.Time.IsZero() {
-			hpaEvent.FirstTimestamp = "Unknown"
-		} else {
-			hpaEvent.FirstTimestamp = event.FirstTimestamp.Format(time.RFC3339)
-		}
-		
-		if event.LastTimestamp.Time.IsZero() {
-			hpaEvent.LastTimestamp = "Unknown"
-		} else {
-			hpaEvent.LastTimestamp = event.LastTimestamp.Format(time.RFC3339)
-		}
-		
-		hpaEvents = append(hpaEvents, hpaEvent)
+		hpaEvents = append(hpaEvents, hm.convertKubernetesEvent(event))
 	}
 
 	status.Events = hpaEvents
+}
+
+// convertKubernetesEvent converts Kubernetes event to internal Event struct
+func (hm *HPAMonitor) convertKubernetesEvent(event v1.Event) Event {
+	return Event{
+		Type:    event.Type,
+		Reason:  event.Reason,
+		Message: event.Message,
+		Count:   event.Count,
+		FirstTimestamp: hm.formatTimestamp(event.FirstTimestamp.Time),
+		LastTimestamp:  hm.formatTimestamp(event.LastTimestamp.Time),
+	}
+}
+
+// formatTimestamp formats timestamp, returns "Unknown" for zero time
+func (hm *HPAMonitor) formatTimestamp(t time.Time) string {
+	if t.IsZero() {
+		return "Unknown"
+	}
+	return t.Format(time.RFC3339)
+}
+
+// normalizeMetricValue normalizes metric values (converts 1000m to 1)
+// CPU metrics are excluded from normalization
+func (hm *HPAMonitor) normalizeMetricValue(value string, metricName string) string {
+	// Don't normalize percentage values or CPU metrics
+	if strings.HasSuffix(value, "%") || strings.Contains(strings.ToLower(metricName), "cpu") {
+		return value
+	}
+	
+	// Check if value ends with 'm' (milli unit)
+	if strings.HasSuffix(value, "m") {
+		valueStr := strings.TrimSuffix(value, "m")
+		if parsedValue, err := strconv.ParseFloat(valueStr, 64); err == nil {
+			// Convert milli to base unit (1000m = 1)
+			normalizedValue := parsedValue / 1000.0
+			
+			// Format with appropriate precision
+			if normalizedValue == float64(int64(normalizedValue)) {
+				return fmt.Sprintf("%.0f", normalizedValue)
+			} else if normalizedValue >= 10 {
+				return fmt.Sprintf("%.1f", normalizedValue)
+			} else {
+				return fmt.Sprintf("%.2f", normalizedValue)
+			}
+		}
+	}
+	
+	// Return original value if not a milli unit or parsing failed
+	return value
+}
+
+// Resource metric handlers
+func (hm *HPAMonitor) handleResourceTarget(resource *autoscalingv2.ResourceMetricSource, status *HPAStatus) {
+	status.PrimaryMetricName = string(resource.Name)
+	if resource.Target.AverageUtilization != nil {
+		target := fmt.Sprintf("%d%%", *resource.Target.AverageUtilization)
+		status.PrimaryMetricTarget = &target
+		// Backwards compatibility for CPU
+		if resource.Name == "cpu" {
+			status.TargetCPUUtilization = resource.Target.AverageUtilization
+		}
+	}
+}
+
+func (hm *HPAMonitor) handleResourceCurrent(resource *autoscalingv2.ResourceMetricStatus, status *HPAStatus) {
+	if resource.Current.AverageUtilization != nil {
+		current := fmt.Sprintf("%d%%", *resource.Current.AverageUtilization)
+		status.PrimaryMetricCurrent = &current
+		// Backwards compatibility for CPU
+		if resource.Name == "cpu" {
+			status.CurrentCPUUtilization = resource.Current.AverageUtilization
+		}
+	}
+}
+
+// Container resource metric handlers
+func (hm *HPAMonitor) handleContainerResourceTarget(containerResource *autoscalingv2.ContainerResourceMetricSource, status *HPAStatus) {
+	status.PrimaryMetricName = string(containerResource.Name)
+	if containerResource.Target.AverageUtilization != nil {
+		target := fmt.Sprintf("%d%%", *containerResource.Target.AverageUtilization)
+		status.PrimaryMetricTarget = &target
+	} else if containerResource.Target.AverageValue != nil {
+		target := containerResource.Target.AverageValue.String()
+		status.PrimaryMetricTarget = &target
+	}
+}
+
+func (hm *HPAMonitor) handleContainerResourceCurrent(containerResource *autoscalingv2.ContainerResourceMetricStatus, status *HPAStatus) {
+	if containerResource.Current.AverageUtilization != nil {
+		current := fmt.Sprintf("%d%%", *containerResource.Current.AverageUtilization)
+		status.PrimaryMetricCurrent = &current
+	} else if containerResource.Current.AverageValue != nil {
+		current := containerResource.Current.AverageValue.String()
+		status.PrimaryMetricCurrent = &current
+	}
+}
+
+// External metric handlers
+func (hm *HPAMonitor) handleExternalTarget(external *autoscalingv2.ExternalMetricSource, status *HPAStatus) {
+	status.PrimaryMetricName = external.Metric.Name
+	if external.Target.AverageValue != nil {
+		target := hm.normalizeMetricValue(external.Target.AverageValue.String(), external.Metric.Name)
+		status.PrimaryMetricTarget = &target
+	} else if external.Target.Value != nil {
+		target := hm.normalizeMetricValue(external.Target.Value.String(), external.Metric.Name)
+		status.PrimaryMetricTarget = &target
+	}
+}
+
+func (hm *HPAMonitor) handleExternalCurrent(external *autoscalingv2.ExternalMetricStatus, status *HPAStatus) {
+	if external.Current.AverageValue != nil {
+		current := hm.normalizeMetricValue(external.Current.AverageValue.String(), status.PrimaryMetricName)
+		status.PrimaryMetricCurrent = &current
+	} else if external.Current.Value != nil {
+		current := hm.normalizeMetricValue(external.Current.Value.String(), status.PrimaryMetricName)
+		status.PrimaryMetricCurrent = &current
+	}
+}
+
+// Object metric handlers
+func (hm *HPAMonitor) handleObjectTarget(object *autoscalingv2.ObjectMetricSource, status *HPAStatus) {
+	status.PrimaryMetricName = object.Metric.Name
+	if object.Target.AverageValue != nil {
+		target := object.Target.AverageValue.String()
+		status.PrimaryMetricTarget = &target
+	} else if object.Target.Value != nil {
+		target := object.Target.Value.String()
+		status.PrimaryMetricTarget = &target
+	}
+}
+
+func (hm *HPAMonitor) handleObjectCurrent(object *autoscalingv2.ObjectMetricStatus, status *HPAStatus) {
+	if object.Current.AverageValue != nil {
+		current := object.Current.AverageValue.String()
+		status.PrimaryMetricCurrent = &current
+	} else if object.Current.Value != nil {
+		current := object.Current.Value.String()
+		status.PrimaryMetricCurrent = &current
+	}
 }
 
 // calculateRatio calculates the ratio between current and target metrics
